@@ -173,6 +173,34 @@ class TestKoanStructure:
         test_methods = [m for m in dir(cls) if m.startswith("test_")]
         assert len(test_methods) >= 3
 
+    def test_about_harness_basic_exists_and_has_tests(self):
+        mod = _load_koan_module("about_harness_basic")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
+    def test_about_harness_failure_exists_and_has_tests(self):
+        mod = _load_koan_module("about_harness_failure")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
+    def test_about_harness_audit_exists_and_has_tests(self):
+        mod = _load_koan_module("about_harness_audit")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
+    def test_about_punch_out_exists_and_has_tests(self):
+        mod = _load_koan_module("about_punch_out")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
 
 class TestKoanAnswersWithFillMeIn:
     """Verify that koans have _fill_ blanks for the learner to fill."""
@@ -263,6 +291,30 @@ class TestKoanAnswersWithFillMeIn:
         with open(mod.__file__) as f:
             source = f.read()
         assert "_fill_" in source, "about_adversarial_review should have _fill_ blanks"
+
+    def test_harness_basic_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_harness_basic")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_harness_basic should have _fill_ blanks"
+
+    def test_harness_failure_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_harness_failure")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_harness_failure should have _fill_ blanks"
+
+    def test_harness_audit_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_harness_audit")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_harness_audit should have _fill_ blanks"
+
+    def test_punch_out_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_punch_out")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_punch_out should have _fill_ blanks"
 
     def test_statelessness_fill_in_assert_match_raises(self):
         """When _fill_ is used in assert_match, it should raise FillMeInError."""
