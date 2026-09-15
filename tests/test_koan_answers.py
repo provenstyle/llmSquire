@@ -103,6 +103,34 @@ class TestKoanStructure:
         test_methods = [m for m in dir(cls) if m.startswith("test_")]
         assert len(test_methods) >= 3
 
+    def test_about_tool_definitions_exists_and_has_tests(self):
+        mod = _load_koan_module("about_tool_definitions")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
+    def test_about_tool_calling_exists_and_has_tests(self):
+        mod = _load_koan_module("about_tool_calling")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
+    def test_about_constraining_tools_exists_and_has_tests(self):
+        mod = _load_koan_module("about_constraining_tools")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
+    def test_about_context_composition_exists_and_has_tests(self):
+        mod = _load_koan_module("about_context_composition")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 4
+
 
 class TestKoanAnswersWithFillMeIn:
     """Verify that koans have _fill_ blanks for the learner to fill."""
@@ -132,6 +160,30 @@ class TestKoanAnswersWithFillMeIn:
         with open(mod.__file__) as f:
             source = f.read()
         assert "_fill_" in source, "about_system_prompts should have _fill_ blanks"
+
+    def test_tool_definitions_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_tool_definitions")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_tool_definitions should have _fill_ blanks"
+
+    def test_tool_calling_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_tool_calling")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_tool_calling should have _fill_ blanks"
+
+    def test_constraining_tools_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_constraining_tools")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_constraining_tools should have _fill_ blanks"
+
+    def test_context_composition_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_context_composition")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_context_composition should have _fill_ blanks"
 
     def test_statelessness_fill_in_assert_match_raises(self):
         """When _fill_ is used in assert_match, it should raise FillMeInError."""
