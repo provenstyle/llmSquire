@@ -12,8 +12,10 @@ The central thesis is that LLMs are stateless function callors whose power emerg
 
 - LLMs are stateless — every call is a fresh start, and context management is your job
 - Tool calling is the primitive — interesting workers emerge from constraining what tools are available
-- Evaluation-driven development (EDD) is how you know your worker actually works
-- Complex workflows are decomposed into individually testable steps (Stage 3/4 lessons)
+- Context composition is the bridge — what the model sees after tool calls can be constructed synthetically, which transforms how you test
+- Evaluation-driven development (EDD) is how you know your worker actually works, and non-determinism means you need majority voting, not single runs
+- Guardrails are always deterministic code — if you need judgment, that's an adversarial agent, not a guardrail
+- Complex workflows are decomposed into individually testable steps, then wired together with a harness that executes (Stage 3/4 lessons)
 - Skills are written job descriptions for units of work — the prompt is the code
 
 ---
@@ -149,10 +151,14 @@ The journey moves from concrete to abstract, from single calls to composed workf
 6. **Context Composition** — seeing exactly what the model sees after tool calls, and why this changes everything about testing
 7. **Skills** — writing structured prompts as job descriptions (RTCC)
 8. **Evaluation** — writing criteria that determine if a skill actually works
-9. **EDD** — iterating on a skill using evaluation feedback (Red/Green/Refactor)
+9. **EDD** — iterating on a skill using evaluation feedback (Red/Green/Refactor), with majority-vote handling of non-determinism
 10. **Decomposition** — breaking complex workflows into individually testable steps
-11. **Guardrails** — adding validation between steps
-12. **Orchestration** — wiring steps together with a harness that executes
+11. **Guardrails** — adding deterministic validation between steps (always code, never LLM)
+12. **Adversarial Review** — LLM-based agents that challenge outputs from a different perspective
+13. **Harness: Basic** — wiring steps together with a script that executes
+14. **Harness: Failure** — retry logic and failure traceability
+15. **Harness: Audit** — per-step model/token/cost logging and end-to-end success rates
+16. **Punch-Out** — human evacuation points that cannot be bypassed
 
 ### 4.6 Sequence Diagrams — Seeing the Conversation
 
@@ -184,9 +190,9 @@ llmSquire/
 ├── llmsquire/                      # The harness (learners don't touch this)
 │   ├── __init__.py
 │   ├── sensei.py                   # Test runner — stops at first failure, zen output
-│   ├── koan.py                     # Base Koan class, exercise registration
-│   ├── llm_client.py               # LLM API client wrapper (OpenAI-compatible)
-│   ├── evaluator.py                # Evaluation framework for LLM-based exercises
+│   ├── koan.py                     # Base Koan class, _fill_ sentinel, per-test llm
+│   ├── llm_client.py               # LLM API client (OpenAI-compatible, dual config)
+│   ├── evaluator.py                # Evaluation framework (majority-vote over N runs)
 │   ├── assertions.py               # Custom assertions for LLM responses
 │   ├── diagram.py                  # Sequence diagram generator (single-file HTML)
 │   └── path_to_enlightenment.py    # Ordered list of koan modules
@@ -205,17 +211,17 @@ llmSquire/
 │   ├── about_decomposition.py
 │   ├── about_guardrails.py
 │   ├── about_adversarial_review.py
-│   ├── about_orchestration.py
+│   ├── about_harness_basic.py
+│   ├── about_harness_failure.py
+│   ├── about_harness_audit.py
 │   └── about_punch_out.py
 ├── diagrams/                       # Auto-generated sequence diagrams (HTML)
 │   └── .gitkeep
-├── solutions/                      # Reference solutions (for self-checking)
-│   ├── about_invocation.py
-│   └── ...
 ├── evals/                          # Evaluation configs for the koans themselves
 │   └── promptfooconfig.yaml
 ├── tests/                          # Tests for the harness itself
-│   └── test_sensei.py
+│   ├── test_sensei.py
+│   └── test_koan_answers.py        # Known-correct answers with retry tolerance
 └── .env.example                    # API key configuration template
 ```
 
@@ -253,8 +259,8 @@ class AboutStatelessness(Koan):
         )
 
         # What do you expect the model to say?
-        # Replace the line below with your assertion about second_response
-        self.assert_match("Alice", second_response)
+        # Replace _fill_ with your assertion about second_response
+        self.assert_match(_fill_, second_response)
 ```
 
 The learner runs `python -m llmsquire` and sees:
@@ -287,13 +293,16 @@ The learner edits the file, re-runs, and progresses. The grading logic (the asse
 Following Ruby Koans' `edgecase.rb`:
 
 **`llmsquire/koan.py`** — Base class that exercises inherit from. Provides:
+- `_fill_` — a sentinel value that fails any comparison with a helpful message. The learner replaces `_fill_` with the correct value. It is deliberately verbose enough to not conflict with Python's `_` (throwaway variable) convention, but short enough to be visually obvious as a blank to fill in
+- `self.llm` — a per-test LLM client instance (see 5.4 below). The student writes `llm.ask(...)` in their koan file, but under the hood `llm` is `self.llm`, scoped to the current test method. This is how conversation traces are scoped without the student ever seeing context managers or trace objects
 - `self.assert_match(expected, actual)` — substring/pattern match for LLM responses
 - `self.assert_tool_called(response, tool_name)` — verifies a tool was invoked
 - `self.assert_tool_not_called(response, tool_name)` — verifies a tool was NOT invoked
 - `self.assert_json_schema(response, schema)` — validates structured output
-- `self.assert_eval(response, criteria)` — runs an LLM-based evaluation
-- `llm.ask(messages=..., tools=..., model=...)` — the LLM client wrapper (records all round trips to a conversation trace)
-- After each test method completes (or fails), the harness automatically calls `diagram.render(trace)` to produce the HTML sequence diagram
+- `self.assert_eval(response, criteria)` — runs an LLM-based evaluation (majority vote over 3 runs)
+- `self.llm.ask(messages=..., tools=..., model=...)` — single LLM API call. The learner manages the tool-call loop themselves (extract tool_calls, execute, append tool result, call again). This is used in koans 5-8 where understanding the loop IS the lesson
+- `self.llm.converse(messages=..., tools=..., tool_implementations=...)` — high-level helper that handles the full tool-call loop internally. The learner provides tool implementations and gets back the final response. Used in koans 9+ where the loop is boilerplate that would clutter the exercise
+- After each test method completes (or fails), the harness automatically calls `diagram.render(trace)` to produce the HTML sequence diagram. The trace is read from the per-test `self.llm` instance
 
 **`llmsquire/sensei.py`** — The runner. Discovers all Koan subclasses, runs them in path order, stops at first failure, prints zen messages. Modeled directly on Ruby Koans' Sensei class.
 
@@ -315,24 +324,38 @@ PATH = [
     "koans.about_decomposition",
     "koans.about_guardrails",
     "koans.about_adversarial_review",
-    "koans.about_orchestration",
+    "koans.about_harness_basic",
+    "koans.about_harness_failure",
+    "koans.about_harness_audit",
     "koans.about_punch_out",
 ]
 ```
 
 ### 5.4 LLM Client Wrapper
 
-The `llm.ask()` function is the single entry point for all LLM interactions. It wraps an OpenAI-compatible API client and:
+The LLM client is the single entry point for all LLM interactions. It is instantiated per-test by the Koan base class and assigned to `self.llm` (which the student file imports as `llm`). It wraps an OpenAI-compatible API client and:
 
-- Uses a fixed model (configurable via `.env`, defaulting to a mid-tier model)
-- Sets temperature to 0 for reproducibility where possible
-- Accepts `messages`, `tools`, `model`, and `temperature` parameters
-- Returns a structured response object with `.content`, `.tool_calls`, and `.usage`
-- Handles API errors gracefully with clear messages
-- Logs all calls for the audit trail (teaching Stage 4 habits from day one)
-- **Records every round trip** — each call captures the full request payload, full response, timestamp, latency, and token usage into a conversation trace that the diagram generator consumes after the exercise completes
+**Two API modes, configured via environment variables:**
 
-The client maintains a per-exercise conversation trace (a list of interaction records) that is reset at the start of each koan test method. When a test involves the full tool-call loop (user → model → tool_call → tool_result → model → final_answer), the trace captures all round trips, not just the initial call. This trace is what makes the sequence diagrams possible and what makes the audit trail in later koans a natural extension of behavior the learner has been seeing since koan 1.
+The client reads its configuration from environment variables in `.env`, supporting two providers out of the box:
+
+- **Fireworks AI** (default): `LLMSQUIRE_API_BASE=https://api.fireworks.ai/inference/v1`, `LLMSQUIRE_MODEL=accounts/fireworks/models/deepseek-v4-flash-0731`, `LLMSQUIRE_API_KEY=<fireworks key>`
+- **Ollama Cloud**: `LLMSQUIRE_API_BASE=https://api.ollama.com/v1`, `LLMSQUIRE_MODEL=deepseek-v4-flash:cloud`, `LLMSQUIRE_API_KEY=<ollama key>`
+
+The model is normalized to **DeepSeek V4 Flash 0731** across both providers. This model supports tool calling, structured outputs, and temperature control — all required for the curriculum. It is a mid-tier model at $0.22/$0.66 per million tokens, aligning with the Stage 3 principle that mid-tier models should be sufficient.
+
+**Two calling patterns:**
+
+- `llm.ask(messages=..., tools=..., model=..., temperature=...)` — a single API call. Returns a structured response object with `.content`, `.tool_calls`, and `.usage`. The learner is responsible for the tool-call loop: check `response.tool_calls`, execute the tool, append a `tool` role message, call `llm.ask()` again. Used in koans 5-8 where the loop IS the lesson.
+- `llm.converse(messages=..., tools=..., tool_implementations=..., model=..., temperature=...)` — handles the full tool-call loop internally. The learner provides tool definitions AND a dict of `{tool_name: callable}` implementations. The method iterates: call the model, if it requests tools, execute them, append results, call again, until the model produces a final response with no tool calls. Used in koans 9+ where the loop is boilerplate.
+
+**Per-test trace scoping:**
+
+Each `self.llm` instance maintains a conversation trace — a list of interaction records. The trace is reset at the start of each test method (the Koan base class creates a fresh `self.llm` in its `setUp`). Every call to `llm.ask()` or `llm.converse()` appends to this trace: the full request payload, the full response, timestamp, latency, and token usage. For `llm.converse()`, the trace captures all intermediate round trips, not just the initial call and final response.
+
+This per-test scoping means the student never sees trace objects, context managers, or any tracing infrastructure. They just call `llm.ask()` or `llm.converse()`, and the harness reads `self.llm.trace` after the test to generate the sequence diagram.
+
+**Error handling**: API errors produce clear messages. The client does NOT silently retry on its own — retries are handled by the evaluator (for LLM-based assertions) or by the learner (for tool-call loops). This keeps behavior transparent and diagnosable via the sequence diagram.
 
 ### 5.5 Sequence Diagram Generator
 
@@ -511,15 +534,17 @@ The client maintains a per-exercise conversation trace (a list of interaction re
 **Exercises**:
 - Start with a weak skill and a set of evaluation criteria. Run it. See it fail (Red).
 - Make one change to the skill prompt. Re-run. See the score change.
-- Iterate 3 times, documenting each hypothesis and result in an iteration log
+- Observe that running the same skill twice with the same input produces slightly different scores — non-determinism is real. The harness shows you all 3 runs and the majority vote in the logs and sequence diagram.
+- Iterate 3 times, documenting each hypothesis and result in an iteration log. Each iteration's score is the majority result of 3 runs, not a single run.
 - Once all criteria pass (Green), review the prompt for load-bearing: can any instruction be removed without causing a criterion to fail? Remove dead weight (Refactor).
 - Calculate the load-bearing percentage: what fraction of instructions serve at least one evaluation criterion?
 - **Context-window testing exercise**: The skill under test reads three files and reasons about them to produce a summary. Instead of creating real files on disk and running the read_file tool, construct the test scenario by pre-populating the messages array with synthetic tool call and tool result messages containing the file contents. Run the skill against this synthetic context. Observe that the evaluation works identically — the model produces the same quality of reasoning whether the file contents came from real tool calls or from synthetic messages you constructed.
 - Open the sequence diagram from the context-composition koan (Koan 8) side by side with this exercise's diagram. See that the message structure is the same. This is the practical payoff of understanding context composition: your EDD runner becomes simpler, faster, and more deterministic because you eliminate file I/O and tool execution from the test loop.
+- **Non-determinism as a lesson**: The evaluation logs show 3 runs per criterion. Sometimes all 3 agree (strong signal). Sometimes 2 of 3 agree (weaker signal — the skill is borderline). Sometimes all 3 disagree (the skill is unreliable). This is itself a Stage 3 lesson: a single evaluation run is never sufficient. Majority voting over multiple runs is how you build confidence. The iteration log should note when scores are noisy and what that tells you about the skill's reliability.
 
-**Stage 3 connection**: This IS Stage 3. The learner is doing the exact Red/Green/Refactor cycle that certification requires, with the iteration log and load-bearing analysis. The context-window testing exercise directly addresses a common failure mode in Stage 3 submissions: practitioners who try to evaluate skills that use tools by setting up complex file fixtures and running the full tool-call loop, when they could simply construct the context the skill would have seen and evaluate the reasoning output directly.
+**Stage 3 connection**: This IS Stage 3. The learner is doing the exact Red/Green/Refactor cycle that certification requires, with the iteration log and load-bearing analysis. The context-window testing exercise directly addresses a common failure mode in Stage 3 submissions: practitioners who try to evaluate skills that use tools by setting up complex file fixtures and running the full tool-call loop, when they could simply construct the context the skill would have seen and evaluate the reasoning output directly. The majority-vote evaluation teaches that non-determinism is not a bug — it is a property of the system that must be managed with statistical discipline.
 
-**Student sees**: A skill file, an evaluation file, and an iteration log template. They edit the skill, run the eval, log the iteration, and repeat. The harness runs the evaluation and reports scores. The context-window testing exercise provides a pre-built messages array template with blanks for the synthetic tool results.
+**Student sees**: A skill file, an evaluation file, and an iteration log template. They edit the skill, run the eval, log the iteration, and repeat. The harness runs the evaluation 3 times and reports all scores plus the majority result. The context-window testing exercise provides a pre-built messages array template with blanks for the synthetic tool results.
 
 ---
 
@@ -541,16 +566,19 @@ The client maintains a per-exercise conversation trace (a list of interaction re
 
 #### Koan 13: about_guardrails.py — "The Walls Between Rooms"
 
-**Concept**: Guardrails sit BETWEEN steps, not inside them. They validate outputs before the next step is allowed to begin.
+**Concept**: Guardrails sit BETWEEN steps, not inside them. They validate outputs before the next step is allowed to begin. Guardrails are ALWAYS deterministic Python functions. They NEVER call an LLM.
 
 **Exercises**:
 - Run the 3-step workflow from the previous koan without guardrails. Inject a bad input. See the error propagate.
-- Add a deterministic guardrail (a Python function) between step 1 and step 2: validate that the research output is non-empty and contains at least 3 findings.
+- Add a deterministic guardrail (a Python function) between step 1 and step 2: validate that the research output is non-empty and contains at least 3 findings. This is pure Python — string checks, list length, no LLM calls.
 - See the guardrail catch the bad input and halt the workflow
-- Add another guardrail between step 2 and step 3: validate the summary is under 500 words and contains no PII patterns
-- Reflection: "Guardrails are infrastructure, not UX. They must be automated — human review between steps is Stage 2, not Stage 4."
+- Add another guardrail between step 2 and step 3: validate the summary is under 500 words and contains no PII patterns (regex for email addresses, phone numbers, SSN patterns). Again, pure Python.
+- Write a guardrail that checks a JSON schema — verify the output parses as JSON and has the required fields with the right types
+- Reflection: "Guardrails are infrastructure, not UX. They must be automated — human review between steps is Stage 2, not Stage 4. And they are always deterministic code — if you need judgment, that's what adversarial agents are for."
 
-**Stage 4 connection**: Stage 4 requires both deterministic hooks AND adversarial review agents. This koan introduces the deterministic side.
+**Hard rule**: Guardrails in llmSquire are always deterministic. They never call an LLM. A guardrail that calls an LLM is not a guardrail — it is an adversarial agent (koan 14). This separation is a Stage 4 lesson: deterministic hooks and adversarial agents are complementary but distinct.
+
+**Stage 4 connection**: Stage 4 requires both deterministic hooks AND adversarial review agents. This koan introduces the deterministic side. Window-dressing guardrails (checking only file existence or non-empty output) are an automatic FAIL in Stage 4 — they are worse than no guardrails because they create the illusion of safety.
 
 #### Koan 14: about_adversarial_review.py — "The Red Team"
 
@@ -566,22 +594,55 @@ The client maintains a per-exercise conversation trace (a list of interaction re
 
 **Stage 4 connection**: This is the exact Stage 4 requirement — adversarial agents must genuinely challenge with a different perspective, not just re-verify.
 
-#### Koan 15: about_orchestration.py — "The Harness Executes"
+#### Koan 15: about_harness_basic.py — "The Harness Executes"
 
-**Concept**: A harness is a script that EXECUTES the workflow end-to-end: calls agents in sequence, passes outputs, fires guardrails, handles failures. A YAML config that documents step order is NOT a harness.
+**Concept**: A harness is a script that EXECUTES the workflow end-to-end: calls agents in sequence, passes outputs between steps, fires guardrails. A YAML config that documents step order is NOT a harness.
 
 **Exercises**:
-- Write a Python harness that runs the 3-step workflow with guardrails
-- The harness must: call step 1, run guardrail 1, call step 2, run guardrail 2, call step 3, produce final output
-- Add failure handling: if a guardrail fails, retry the step once, then halt with an error
-- Add audit logging: each step records model, input tokens, output tokens, and cost
-- Run the harness end-to-end and verify it produces correct output
-- Run it with a bad input and verify it halts at the appropriate guardrail
+- Write a Python function `run_workflow(topic)` that runs the 3-step workflow: research → summarize → draft email
+- The harness calls each step using `llm.converse()` with the appropriate skill prompt and tools
+- Between steps, the harness calls the guardrails from koan 13 — the learner's own guardrail functions are automatically imported and available
+- The harness passes the output of each step as input to the next step
+- Run the harness end-to-end and verify it produces a coherent email report
 - Reflection: "If a human has to type the command for each step, the human IS the workflow."
 
-**Stage 4 connection**: The harness/runner script is a hard Stage 4 requirement. This koan teaches it directly.
+**Incremental building**: This koan uses the learner's decomposition answers (koan 12) and guardrail answers (koan 13). The harness imports their step definitions and guardrail functions automatically. If their earlier work is wrong, the harness will fail in ways that trace back to the earlier mistake — a lesson in why each step must be individually validated first.
 
-#### Koan 16: about_punch_out.py — "The Human in the Machine"
+**Stage 4 connection**: The harness/runner script is a hard Stage 4 requirement. This koan teaches the basic structure.
+
+#### Koan 16: about_harness_failure.py — "When Things Go Wrong"
+
+**Concept**: A production harness handles failures gracefully. If a guardrail fails, the harness retries the step once, then halts with a clear error that traces the failure to its origin step.
+
+**Exercises**:
+- Extend the harness from koan 15 with failure handling
+- If a guardrail fails, retry the step once with the same input
+- If the retry also fails, halt the workflow and report: which step failed, which guardrail caught it, what the output was, and what the guardrail expected
+- Inject a bad input at step 1 and verify the harness halts at guardrail 1 with a clear error
+- Inject a borderline input at step 2 and verify the retry mechanism works — if the model produces better output on the second try, the workflow continues
+- Reflection: "Failures must be traceable to their origin step. The audit trail starts here."
+
+**Incremental building**: This koan imports the learner's basic harness from koan 15 and extends it. The learner adds failure handling and retry logic to their existing code.
+
+**Stage 4 connection**: Stage 4 requires that any failure can be traced to its origin step. This koan teaches that discipline.
+
+#### Koan 17: about_harness_audit.py — "The Cost of Everything"
+
+**Concept**: Every step execution must record the model used, input tokens, output tokens, and cost. This is the "cost-adjusted capacity" metric — you cannot manage what you do not measure.
+
+**Exercises**:
+- Extend the harness from koan 16 with audit logging
+- After each step execution, record: step name, model, input tokens, output tokens, cost (calculated from token counts × model pricing), timestamp, and pass/fail status
+- Write the audit log as a structured JSON file after the workflow completes
+- Run the workflow and examine the audit log — see how tokens compound across steps (the output of step 1 becomes input context for step 2, so input tokens grow)
+- Calculate the end-to-end success rate: run the workflow 5 times and record how many complete successfully. See how per-step accuracy compounds — at 95% per-step, 3 steps succeed ~86% of the time, but at 90% per-step, only ~73%
+- Reflection: "At 95% per-step accuracy, a 20-step pipeline completes correctly only ~36% of the time. Compounding error is the enemy."
+
+**Incremental building**: This koan imports the learner's harness with failure handling from koan 16 and adds the audit logging layer. The conversation traces from `self.llm` provide the token counts and model information automatically — the learner just needs to extract and log them.
+
+**Stage 4 connection**: Stage 4 requires per-step model/token/cost data in the audit trail, plus an end-to-end success rate report. This koan teaches both.
+
+#### Koan 18: about_punch_out.py — "The Human in the Machine"
 
 **Concept**: Punch-out points are explicit, provable human evacuation points where the workflow cannot proceed without human sign-off.
 
@@ -633,7 +694,7 @@ CALCULATOR_TOOL = {
 FILE_WRITER_TOOL = {
     # Define the file_writer tool here
     # It should accept a filename and content
-    __
+    _fill_
 }
 
 
@@ -651,7 +712,7 @@ class AboutConstrainingTools(Koan):
     def test_with_calculator_only(self):
         response = llm.ask(
             messages=[{"role": "user", "content": "Calculate 2+2 and write the result to result.txt"}],
-            tools=[__]  # Give the model ONLY the calculator
+            tools=[_fill_]  # Give the model ONLY the calculator
         )
         # The model should call the calculator but NOT the file_writer
         self.assert_tool_called(response, "calculator")
@@ -669,9 +730,9 @@ This is the Squire pattern: `ConsoleKihon.cs` has 4 method stubs. `ConsoleKihonB
 Every koan file follows this structure:
 
 1. **Teaching comment** (top of file): 3-10 lines explaining the concept and what the learner will do
-2. **Imports**: Only `from llmsquire import Koan, llm` (and occasionally pre-defined constants)
+2. **Imports**: Only `from llmsquire import Koan, llm` (and occasionally pre-defined constants). The `_fill_` sentinel is available without import — it is injected by the Koan base class
 3. **Pre-defined constants**: Tool definitions, sample data, etc. — provided so the learner doesn't have to write boilerplate
-4. **Koan class**: Contains test methods with `__` blanks or method bodies to implement
+4. **Koan class**: Contains test methods with `_fill_` blanks or method bodies to implement. Early koans (5-8) use `llm.ask()` for single calls and manual tool-call loops. Later koans (9+) use `llm.converse()` for the full loop handled internally
 5. **Nothing else**: No `if __name__`, no configuration, no helper functions (those go in the harness)
 
 ---
@@ -682,36 +743,103 @@ Every koan file follows this structure:
 
 Python is the lingua franca of AI/ML. It has the lowest barrier to entry for the target audience. The OpenAI Python SDK (and compatible clients) is the standard interface for LLM APIs.
 
-### 8.2 LLM API: OpenAI-Compatible
+### 8.2 LLM API: OpenAI-Compatible, Dual Provider
 
-The `llm.ask()` wrapper uses the OpenAI Python SDK with a configurable base URL. This means it works with:
-- OpenAI (GPT models)
-- Anthropic (via their OpenAI-compatible endpoint)
-- Local models via Ollama, llama.cpp, vLLM
-- Any OpenAI-compatible proxy (Bifrost, LiteLLM, etc.)
+The LLM client uses the OpenAI Python SDK with a configurable base URL. It supports two providers out of the box, configured via `.env`:
 
-This keeps the koans provider-agnostic and lets learners use whatever API access they have.
+- **Fireworks AI** (default): `LLMSQUIRE_API_BASE=https://api.fireworks.ai/inference/v1`
+- **Ollama Cloud**: `LLMSQUIRE_API_BASE=https://api.ollama.com/v1`
 
-### 8.3 Default Model: Mid-Tier
+Both endpoints are OpenAI-compatible, so the same code works with either. The learner sets `LLMSQUIRE_API_BASE`, `LLMSQUIRE_MODEL`, and `LLMSQUIRE_API_KEY` in their `.env` file.
 
-Following the Stage 3 principle that mid-tier models should be sufficient, the default model is a mid-tier option (e.g., GPT-4o-mini, Claude Haiku, or equivalent). The `.env.example` file documents how to change this. If a learner needs a frontier model to pass a koan, that's a bug in the koan, not a limitation of the learner.
+### 8.3 Default Model: DeepSeek V4 Flash 0731
 
-### 8.4 Evaluation Framework
+The model is normalized to **DeepSeek V4 Flash 0731** across both providers:
+- Fireworks: `accounts/fireworks/models/deepseek-v4-flash-0731`
+- Ollama Cloud: `deepseek-v4-flash:cloud`
 
-For koans that require LLM-based evaluation (e.g., "is this summary coherent?"), the harness includes a lightweight evaluator that calls a separate LLM with a rubric. This mirrors the Stage 3 certification approach where Claude Haiku acts as the examiner.
+This model supports tool calling, structured outputs, and temperature control — all required for the curriculum. It is a mid-tier model at $0.22/$0.66 per million tokens (Fireworks pricing), aligning with the Stage 3 principle that mid-tier models should be sufficient. At this price point, a full run of all 18 koans costs well under $1.00, so API cost is not a concern.
 
-For koans that can be evaluated deterministically (e.g., "does the response contain valid JSON?", "was the calculator tool called?"), the harness uses pure Python assertions. Deterministic evaluation is preferred wherever possible — this is a Stage 4 lesson (deterministic hooks over LLM judges where feasible).
+### 8.4 The `_fill_` Sentinel
 
-### 8.5 Non-Determinism Handling
+The learner fills in blanks using `_fill_` — a sentinel value that fails any comparison with a helpful message. The design criteria:
+
+- Must not conflict with Python's `_` convention (throwaway variable in unpacking, REPL last result)
+- Must be visually obvious as "this needs to be replaced"
+- Must produce a clear error message when used in a comparison, not a confusing `TypeError`
+
+The sentinel is defined in `koan.py` as a custom class instance whose `__eq__` and `__ne__` methods always return `False` and whose `__repr__` returns `"_fill_"`. When an assertion compares against `_fill_`, the failure message says "You left _fill_ in your code — replace it with the correct value" rather than the standard assertion failure.
+
+### 8.5 Student File Structure: Pythonic Option A
+
+Student files define a class that inherits from `Koan` and contains test methods. The test methods ARE in the student file, but they contain only the learner's code and assertion calls — no Arrange/Act/Assert scaffolding, no test discovery boilerplate. The grading logic is in the assertion methods (`self.assert_match`, `self.assert_tool_called`, etc.) which live in the harness.
+
+This is more Pythonic than Squire's abstract-base-class separation. Python doesn't have C#'s clean abstract method pattern, and the Ruby Koans approach of having test methods in the student file is proven and familiar. The decluttered principle is maintained through teaching comments, pre-defined constants, and assertions that read like English rather than test framework boilerplate.
+
+### 8.6 Tool-Call Loop: Two Tiers
+
+**`llm.ask()` — single API call (koans 5-8)**: The learner manages the tool-call loop themselves. They check `response.tool_calls`, execute the tool, construct a `tool` role message, and call `llm.ask()` again. This is used in koans 5-8 where understanding the loop IS the lesson. The sequence diagram shows every round trip, making the mechanics visible.
+
+**`llm.converse()` — full loop handler (koans 9+)**: The learner provides tool definitions and a dict of `{tool_name: callable}` implementations. The method handles iteration: call the model, execute requested tools, append results, call again, until the model produces a final response. Used in koans 9+ where the loop is boilerplate that would clutter the exercise and distract from the concept being taught (skills, evaluation, decomposition, etc.).
+
+### 8.7 Per-Test LLM Instance and Trace Scoping
+
+The Koan base class creates a fresh `self.llm` instance in its `setUp` for each test method. The student file imports `llm` (which is `self.llm` under the hood). Each `self.llm` instance owns its own conversation trace. The harness reads `self.llm.trace` after the test completes (or fails) to generate the sequence diagram.
+
+This means the student never sees trace objects, context managers, or any tracing infrastructure. They just call `llm.ask()` or `llm.converse()`, and the diagram appears.
+
+### 8.8 Evaluation Framework: Majority Vote Over 3 Runs
+
+For koans that require LLM-based evaluation (e.g., "is this summary coherent?"), the harness runs the evaluation 3 times and takes the majority result. This handles non-determinism in the judge model. The evaluation logs show all 3 runs and the majority vote, making the non-determinism visible to the learner.
+
+This is itself a lesson about EDD: non-determinism means a single run cannot be trusted. Multiple runs with majority voting are required to truly ensure grading reliability. The logs and sequence diagrams make this concrete — the learner sees 3 evaluation scores, sees that they sometimes differ, and sees how majority voting produces a stable result.
+
+For koans that can be evaluated deterministically (e.g., "does the response contain valid JSON?", "was the calculator tool called?"), the harness uses pure Python assertions with a single run. Deterministic evaluation is preferred wherever possible.
+
+### 8.9 Guardrails Are ALWAYS Deterministic Code
+
+Guardrails in llmSquire are always deterministic Python functions. They NEVER call an LLM. Full stop. This is a hard rule:
+
+- A guardrail is a function that takes the output of a workflow step and returns either `pass` or `fail` with a reason
+- It validates structure, content, format, or rules that could actually fail
+- It does not ask an LLM "is this output good?" — that is what adversarial review agents are for (koan 14)
+- Guardrails that only check file existence, non-empty output, or an always-true condition are not real guardrails — they are window dressing
+
+This separation of concerns is a Stage 4 lesson: deterministic hooks and adversarial agents are complementary but distinct. Guardrails are infrastructure — fast, reliable, and deterministic. Adversarial agents are intelligence — slow, nuanced, and LLM-based. The learner encounters this distinction concretely: koan 13 writes deterministic guardrails, koan 14 writes adversarial agents, and the harness koans (15-17) use both.
+
+### 8.10 Non-Determinism Handling
 
 LLM outputs are non-deterministic. The harness handles this by:
 - Using temperature=0 by default for reproducibility
-- Testing for semantic properties rather than exact strings (e.g., "response contains a number that equals 4" rather than "response equals '4'")
-- Providing retry logic for flaky evaluations (3 attempts with majority vote)
+- Testing for semantic properties rather than exact strings
 - Using structured outputs (JSON mode) wherever possible to enable deterministic validation
+- Majority voting over 3 runs for LLM-based evaluations (see 8.8)
 - Accepting that some exercises will occasionally fail due to model variance — the learner re-runs and moves on
 
-### 8.6 Offline Mode
+The koans are designed to be tightly enough defined that non-determinism causes failures less than 5% of the time. If a koan fails more often than that, it is a bug in the koan, not a limitation of the learner.
+
+### 8.11 Incremental Harness Building (Koans 15-17)
+
+The original single orchestration koan was too ambitious. It has been split into three koans that build incrementally:
+
+- **Koan 15 (about_harness_basic.py)**: Write a basic harness that runs the 3-step workflow in sequence, passing outputs between steps. The learner's decomposition koan (koan 12) and guardrail koan (koan 13) answers are automatically imported and available — the harness koan uses the learner's prior work, not a reference implementation.
+- **Koan 16 (about_harness_failure.py)**: Extend the harness with failure handling — if a guardrail fails, retry the step once, then halt. Uses the learner's guardrail definitions from koan 13.
+- **Koan 17 (about_harness_audit.py)**: Extend the harness with audit logging — each step records model, input tokens, output tokens, and cost. Uses the learner's harness from koans 15-16.
+
+Each koan imports the learner's previous answers automatically. This means the learner is building on their own work, not starting from scratch each time. It also means if a learner's earlier koan answers are wrong, the later koans will fail in ways that trace back to the earlier mistake — which is itself a lesson about why each step must be individually validated before composition (Stage 4).
+
+### 8.12 CI Testing with Known Answers
+
+The repo includes `tests/test_koan_answers.py` — a test suite that runs all koans against a known set of correct answers. This is how CI verifies the koans themselves work:
+
+- Each koan has a known-correct implementation (stored in the test file, not in a `solutions/` directory that learners might find)
+- CI runs the koans with these answers and expects them to pass
+- Non-determinism is handled with a retry tolerance: if a koan fails, CI retries it up to 3 times. If it passes on any retry, the test passes
+- The retry tolerance exists because LLM outputs are non-deterministic, but koans are designed to fail less than 5% of the time. If a koan fails all 3 retries, that signals a real problem with the koan, not model variance
+
+No `solutions/` directory is shipped. Ruby Koans and Squire do not ship solutions, and the expectation is that learners reach enlightenment by doing, not by reading answers. The known answers exist only in the CI test file.
+
+### 8.13 Offline Mode
 
 A `--offline` flag runs only koans that don't require API calls (prompt structure, tool schema validation, output parsing, decomposition planning). This enables use in classrooms or environments without API access.
 
@@ -721,20 +849,21 @@ A `--offline` flag runs only koans that don't require API calls (prompt structur
 
 ### 9.1 Learning Outcomes
 
-A learner who completes all 16 koans should be able to:
+A learner who completes all 18 koans should be able to:
 1. Explain why LLMs are stateless and demonstrate how to manage conversation state
-2. Define a tool using the JSON schema and handle the tool-call loop
+2. Define a tool using the JSON schema and handle the tool-call loop manually
 3. Explain how constraining available tools shapes worker behavior
 4. Read a sequence diagram of an LLM interaction and identify exactly what is in the context window at each round trip
 5. Construct synthetic context windows with pre-populated tool results to test skills without executing real tool calls or file I/O
 6. Write a skill using the RTCC framework
 7. Write 3+ evaluation criteria for a skill
-8. Run the EDD Red/Green/Refactor cycle on a skill, including context-window-based testing
-9. Decompose a complex task into individually validated steps
-10. Add deterministic guardrails between workflow steps
-11. Write an adversarial review agent with a distinct perspective
-12. Build a harness that executes a multi-step workflow end-to-end
-13. Implement and test a punch-out point for human approval
+8. Run the EDD Red/Green/Refactor cycle on a skill, including majority-vote evaluation over multiple runs and context-window-based testing
+9. Explain why non-determinism requires multiple evaluation runs and how majority voting produces stable results
+10. Decompose a complex task into individually validated steps
+11. Write deterministic guardrails (pure Python, never LLM-based) between workflow steps
+12. Write an adversarial review agent with a distinct perspective (LLM-based, distinct from guardrails)
+13. Build a harness that executes a multi-step workflow, handles failures with retry, and logs per-step audit data
+14. Implement and test a punch-out point for human approval
 
 ### 9.2 Stage 3 Readiness
 
@@ -784,15 +913,13 @@ A dashboard for instructors running llmSquire in a classroom setting, showing le
 
 ## 11. Open Questions
 
-1. **API cost management**: Should we provide a hosted API key for learners, or require them to bring their own? A hosted key lowers the barrier but creates cost. A BYOK approach is more educational but may exclude some learners.
+1. **Progress persistence**: Should the harness remember which koans the learner has passed (like a save file)? Ruby Koans doesn't — you just run from the top each time. Recommendation: follow Ruby Koans. Simplicity over convenience.
 
-2. **Model-specific behavior**: Different models handle tool calling differently (e.g., some models are more aggressive about calling tools, others more reluctant). Should koans be tested against multiple models, or should we pin a single default? Recommendation: pin a default, document known differences in a compatibility matrix.
+2. **Git integration**: Should learners commit their solutions? This teaches good habits but adds complexity. Recommendation: the README suggests committing after each koan, but the harness doesn't enforce it.
 
-3. **Evaluation reliability**: LLM-based evaluation is itself non-deterministic. For the EDD koan specifically, how do we ensure the evaluation the learner writes is reliable enough to be educational? Recommendation: use structured output evaluation (JSON rubrics) rather than free-form LLM judging.
+3. **Capstone koan**: A final reflection koan that ties everything together (the "Mountains are again merely mountains" moment). Deferred — will be designed as a natural stopping point after the core 18 koans are built and tested.
 
-4. **Progress persistence**: Should the harness remember which koans the learner has passed (like a save file)? Ruby Koans doesn't — you just run from the top each time. Recommendation: follow Ruby Koans. Simplicity over convenience.
-
-5. **Git integration**: Should learners commit their solutions? This teaches good habits but adds complexity. Recommendation: the README suggests committing after each koan, but the harness doesn't enforce it.
+4. **Guardrail registration API**: In the harness koans (15-17), how exactly does the learner's guardrail code from koan 13 get imported and made available? The mechanism needs to be designed — likely a convention where the learner's koan file exports guardrail functions with specific names that the harness koan imports. This is an implementation detail to resolve during development.
 
 ---
 
@@ -816,7 +943,7 @@ MIT (matching the permissive spirit of both Ruby Koans and the educational goals
 |---|---|
 | `path_to_enlightenment.rb` (ordered file list) | `path_to_enlightenment.py` (ordered module list) |
 | `edgecase.rb` (Sensei + Koan base) | `sensei.py` + `koan.py` (harness package) |
-| `__` fill-in-the-blank | `__` fill-in-the-blank (same convention) |
+| `__` fill-in-the-blank | `_fill_` sentinel (avoids Python `_` convention collision) |
 | Stop at first failure + zen message | Stop at first failure + LLM-themed zen message |
 | `test_assert_truth` (first koan) | `test_the_first_call` (first koan) |
 | "has damaged your karma" / "expanded your awareness" | Same language, retained for cultural continuity |
@@ -826,12 +953,13 @@ MIT (matching the permissive spirit of both Ruby Koans and the educational goals
 
 | Squire Pattern | llmSquire Application |
 |---|---|
-| Abstract base class with test methods | Koan base class with test methods (hidden in harness) |
-| Concrete class with `throw new NotImplementedException()` | Koan subclass with `__` blanks or `pass` stubs |
-| `BaseKihon` with Castle.Windsor IoC | `Koan` with LLM client and assertion helpers |
+| Abstract base class with test methods | Koan base class with assertion helpers (hidden in harness) |
+| Concrete class with `throw new NotImplementedException()` | Koan subclass with `_fill_` blanks or `pass` stubs |
+| `BaseKihon` with Castle.Windsor IoC | `Koan` with per-test `self.llm` client and assertion helpers |
 | Framework/ directory isolates grading | `llmsquire/` package isolates grading |
 | Descriptive method names as curriculum | Descriptive test names as curriculum |
 | Student never opens Framework/ | Student never opens llmsquire/ |
+| Clean abstract/concrete separation (C#) | Pythonic approach: test methods in student file, grading logic in assertions (Option A) |
 | Kihon = "basics" in martial arts | Squire = knight-in-training; progression toward mastery |
 
 ## Appendix C: Stage 3/4 Assessment Principles Applied
@@ -847,11 +975,15 @@ MIT (matching the permissive spirit of both Ruby Koans and the educational goals
 | RTCC prompt structure | about_skills_rtcc |
 | 3+ evaluation criteria required | about_evaluation_criteria |
 | EDD Red/Green/Refactor | about_edd_cycle |
+| Non-determinism requires majority voting | about_edd_cycle (3-run majority vote) |
 | Load-bearing principle | about_edd_cycle (Refactor phase) |
 | Decompose into individually validated steps | about_decomposition |
 | Guardrails between steps, not inside | about_guardrails |
+| Guardrails are always deterministic code | about_guardrails (hard rule: never LLM) |
 | Adversarial agents with distinct perspective | about_adversarial_review |
-| Harness EXECUTES, doesn't just document | about_orchestration |
+| Harness EXECUTES, doesn't just document | about_harness_basic |
+| Failure handling with retry and traceability | about_harness_failure |
+| Per-step model/token/cost audit trail | about_harness_audit |
+| End-to-end success rate (compounding error) | about_harness_audit |
 | Punch-out points tested for bypass | about_punch_out |
-| Per-step model/token/cost audit trail | about_orchestration (audit logging) |
-| End-to-end success rate (compounding error) | about_orchestration (multi-step pipeline) |
+| Incremental building on prior work | about_harness_basic, about_harness_failure, about_harness_audit |
