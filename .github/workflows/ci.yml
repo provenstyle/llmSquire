@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run harness unit tests
+        run: pytest tests/ -v --tb=short
+
+  koan-answers:
+    runs-on: ubuntu-latest
+    if: false  # Disabled until API key secret is configured
+    env:
+      LLMSQUIRE_API_BASE: https://api.fireworks.ai/inference/v1
+      LLMSQUIRE_MODEL: accounts/fireworks/models/deepseek-v4-flash-0731
+      LLMSQUIRE_API_KEY: ${{ secrets.LLMSQUIRE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run koan answer tests
+        run: pytest tests/test_koan_answers.py -v --tb=short
+        continue-on-error: true

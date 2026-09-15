@@ -1,0 +1,17 @@
+# Diagrams (auto-generated)
+diagrams/*.html
+
+# Environment
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# pytest
+.pytest_cache/

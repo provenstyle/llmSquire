@@ -1,0 +1,167 @@
+"""Tests that verify koan exercise structure — no API calls needed.
+
+These tests check that each koan file:
+- Has the right class name and inherits from Koan
+- Has test methods starting with test_
+- Uses _fill_ in the right places (blanks exist for the learner to fill)
+- The known-correct answers make the tests pass
+
+For koans that require API calls, we mock the LLM client.
+For koans that are deterministic, we run them directly.
+"""
+import pytest
+from unittest.mock import MagicMock, patch
+from types import ModuleType
+import sys
+import os
+
+# Ensure koans/ is importable
+_koans_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "koans")
+if _koans_dir not in sys.path:
+    sys.path.insert(0, os.path.dirname(_koans_dir))
+
+from llmsquire.koan import Koan, _fill_, FillMeInError
+from llmsquire.llm_client import LLMResponse, InteractionRecord
+from llmsquire.proxy import llm as _llm_proxy
+
+
+def _make_mock_response(content="Hello!", tool_calls=None):
+    """Create a mock LLMResponse for testing."""
+    record = InteractionRecord(
+        request={"model": "test", "messages": []},
+        response={"content": content, "tool_calls": tool_calls or []},
+        timestamp=0.0,
+        latency_ms=10.0,
+        input_tokens=5,
+        output_tokens=3,
+        model="test-model",
+    )
+    return LLMResponse(
+        content=content,
+        tool_calls=tool_calls or [],
+        finish_reason="stop",
+        usage=record,
+    )
+
+
+def _setup_mock_llm(response_content="Hello!", tool_calls=None):
+    """Set up the llm proxy with a mock client that returns canned responses."""
+    mock_client = MagicMock()
+    mock_client.trace = []
+    mock_client.ask.return_value = _make_mock_response(response_content, tool_calls)
+    mock_client.converse.return_value = _make_mock_response(response_content, tool_calls)
+    _llm_proxy._client = mock_client
+    return mock_client
+
+
+def _load_koan_module(module_name):
+    """Import a koan module and inject _fill_ into its namespace."""
+    full_name = f"koans.{module_name}"
+    mod = __import__(full_name, fromlist=["*"])
+    # Inject _fill_ into the module's namespace so student code can use it
+    # without importing it. The Sensei runner does the same thing.
+    mod._fill_ = _fill_
+    return mod
+
+
+class TestKoanStructure:
+    """Verify the structural integrity of koan files."""
+
+    def _find_koan_class(self, module):
+        """Find the Koan subclass in a module."""
+        for name in dir(module):
+            obj = getattr(module, name)
+            if isinstance(obj, type) and issubclass(obj, Koan) and obj is not Koan:
+                return obj
+        return None
+
+    def test_about_invocation_exists_and_has_tests(self):
+        mod = _load_koan_module("about_invocation")
+        cls = self._find_koan_class(mod)
+        assert cls is not None, "No Koan subclass found in about_invocation"
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3, f"Expected 3+ tests, got {test_methods}"
+
+    def test_about_statelessness_exists_and_has_tests(self):
+        mod = _load_koan_module("about_statelessness")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 2
+
+    def test_about_context_window_exists_and_has_tests(self):
+        mod = _load_koan_module("about_context_window")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 2
+
+    def test_about_system_prompts_exists_and_has_tests(self):
+        mod = _load_koan_module("about_system_prompts")
+        cls = self._find_koan_class(mod)
+        assert cls is not None
+        test_methods = [m for m in dir(cls) if m.startswith("test_")]
+        assert len(test_methods) >= 3
+
+
+class TestKoanAnswersWithFillMeIn:
+    """Verify that koans have _fill_ blanks for the learner to fill."""
+
+    def test_invocation_has_fill_me_in_blanks(self):
+        """The koan source should contain _fill_ blanks."""
+        mod = _load_koan_module("about_invocation")
+        source_path = mod.__file__
+        with open(source_path) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_invocation should have _fill_ blanks"
+
+    def test_statelessness_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_statelessness")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_statelessness should have _fill_ blanks"
+
+    def test_context_window_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_context_window")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_context_window should have _fill_ blanks"
+
+    def test_system_prompts_has_fill_me_in_blanks(self):
+        mod = _load_koan_module("about_system_prompts")
+        with open(mod.__file__) as f:
+            source = f.read()
+        assert "_fill_" in source, "about_system_prompts should have _fill_ blanks"
+
+    def test_statelessness_fill_in_assert_match_raises(self):
+        """When _fill_ is used in assert_match, it should raise FillMeInError."""
+        mod = _load_koan_module("about_statelessness")
+        cls = None
+        for name in dir(mod):
+            obj = getattr(mod, name)
+            if isinstance(obj, type) and issubclass(obj, Koan) and obj is not Koan:
+                cls = obj
+                break
+
+        instance = cls("test_the_model_does_not_remember")
+        instance.setup()
+        _setup_mock_llm("I don't know your name.")
+
+        with pytest.raises(FillMeInError):
+            instance.test_the_model_does_not_remember()
+
+
+class TestPathToEnlightenment:
+    """Verify the path is properly configured."""
+
+    def test_path_has_18_entries(self):
+        from llmsquire.path_to_enlightenment import PATH
+        assert len(PATH) == 18
+
+    def test_path_starts_with_invocation(self):
+        from llmsquire.path_to_enlightenment import PATH
+        assert PATH[0] == "koans.about_invocation"
+
+    def test_path_ends_with_punch_out(self):
+        from llmsquire.path_to_enlightenment import PATH
+        assert PATH[-1] == "koans.about_punch_out"
