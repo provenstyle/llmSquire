@@ -15,8 +15,19 @@
 from llmsquire import Koan, llm
 
 
-# A poorly-structured prompt — no RTCC, just a vague request
-WEAK_PROMPT = "Help me extract action items from meeting notes."
+# A deliberately incomplete RTCC prompt — it has headings but omits the
+# specificity that makes a skill reliable.
+WEAK_PROMPT = """## Role
+You help with meeting notes.
+
+## Task
+Extract action items.
+
+## Context
+The input contains meeting notes.
+
+## Constraints
+- Use a helpful format."""
 
 
 class AboutSkillsRtcc(Koan):
@@ -103,3 +114,40 @@ class AboutSkillsRtcc(Koan):
         # And should be relatively short (3 bullet points)
         lines = [l for l in response.content.strip().split("\n") if l.strip().startswith("-")]
         self.assert_true(len(lines) >= 2, f"Expected 2+ bullet points, got {len(lines)}")
+
+    def test_skill_md_metadata_pattern(self):
+        # SKILL.md metadata is the industry-standard progressive-disclosure pattern:
+        # the initial system prompt contains only name, description, and trigger.
+        # The model uses that metadata to identify a relevant skill; the harness then
+        # loads the full RTCC body only when the skill is needed.
+        skill_metadata = _fill_
+        # Use exactly:
+        # """name: action-item-extractor
+        # description: Extract action items from meeting notes as structured JSON.
+        # trigger: Use when processing meeting notes to identify tasks, owners, and deadlines."""
+
+        skill_body = _fill_
+        # Write the full RTCC body separately. It should define:
+        # Role: action item extractor
+        # Task: extract action items from meeting notes
+        # Context: plain-text meeting notes
+        # Constraints: valid JSON array only; each item has task, owner, and deadline
+
+        response = llm.ask(
+            messages=[
+                {"role": "system", "content": skill_metadata},
+                {"role": "system", "content": skill_body},
+                {"role": "user", "content": "Meeting: Alice will send the launch email by Friday. Bob needs to update the API docs."}
+            ]
+        )
+        # The metadata describes when to load the skill; the separately loaded body
+        # supplies the instructions that make the output deterministic and testable.
+        import json
+        content = response.content
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+        data = json.loads(content)
+        self.assert_true(isinstance(data, list))
+        self.assert_true(len(data) >= 2)
