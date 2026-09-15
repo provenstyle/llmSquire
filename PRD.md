@@ -146,12 +146,29 @@ The journey moves from concrete to abstract, from single calls to composed workf
 3. **Context Engineering** — managing what goes into the context window
 4. **Tool Calling** — defining tools, seeing the model choose to call them
 5. **Constraining Tools** — limiting available tools to shape worker behavior
-6. **Skills** — writing structured prompts as job descriptions (RTCC)
-7. **Evaluation** — writing criteria that determine if a skill actually works
-8. **EDD** — iterating on a skill using evaluation feedback (Red/Green/Refactor)
-9. **Decomposition** — breaking complex workflows into individually testable steps
-10. **Guardrails** — adding validation between steps
-11. **Orchestration** — wiring steps together with a harness that executes
+6. **Context Composition** — seeing exactly what the model sees after tool calls, and why this changes everything about testing
+7. **Skills** — writing structured prompts as job descriptions (RTCC)
+8. **Evaluation** — writing criteria that determine if a skill actually works
+9. **EDD** — iterating on a skill using evaluation feedback (Red/Green/Refactor)
+10. **Decomposition** — breaking complex workflows into individually testable steps
+11. **Guardrails** — adding validation between steps
+12. **Orchestration** — wiring steps together with a harness that executes
+
+### 4.6 Sequence Diagrams — Seeing the Conversation
+
+LLM interactions are multi-round-trip conversations that happen inside a black box. The learner writes `llm.ask(messages=[...])` and gets back a response, but they cannot see the intermediate steps: the tool calls the model requested, the tool results the harness returned, the second LLM call that incorporated those results, or the exact payload that was sent on the second trip. This invisibility is a major pedagogical barrier.
+
+Every time a koan exercise triggers one or more LLM interactions, the runner automatically produces a single-file HTML sequence diagram that renders the complete conversation as a visual timeline. The diagram shows:
+
+- **Every LLM API call** as a vertical lifeline with the exact request payload (messages array, tools, system prompt, model, temperature) and the exact response (content, tool_calls, usage, latency in milliseconds)
+- **Every tool invocation** as an arrow between the harness lifeline and the tool lifeline, showing the tool name, arguments, return value, and execution time
+- **The growing context window** as an expandable panel on the LLM lifeline — at each round trip, the learner can see exactly what messages are in context, including system prompt, prior user messages, assistant responses, tool calls, and tool results
+- **Timings** between every step, making latency and multi-round-trip cost visible
+- **Token counts** per call (input tokens, output tokens, cumulative tokens) so the cost of context growth is concrete
+
+This is not a debugging tool. It is a teaching instrument. Visual learners need to see that when a model calls a `read_file` tool, the file contents come back as a `tool` role message in the context, and on the next round trip the model sees those contents alongside everything else. Once you can see that, a critical insight becomes obvious: for evaluation purposes, you don't need to actually read files from disk — you can pre-populate the context window with the file contents as if the tool had already been called. This insight is the bridge between understanding tool calling and doing effective EDD.
+
+The HTML files are self-contained (inline CSS and JS, no external dependencies) and are written to a `diagrams/` directory next to the koans. The runner prints the file path after each exercise. Learners can open them in any browser.
 
 ---
 
@@ -171,6 +188,7 @@ llmSquire/
 │   ├── llm_client.py               # LLM API client wrapper (OpenAI-compatible)
 │   ├── evaluator.py                # Evaluation framework for LLM-based exercises
 │   ├── assertions.py               # Custom assertions for LLM responses
+│   ├── diagram.py                  # Sequence diagram generator (single-file HTML)
 │   └── path_to_enlightenment.py    # Ordered list of koan modules
 ├── koans/                          # The exercises (learners edit these)
 │   ├── about_invocation.py
@@ -180,6 +198,7 @@ llmSquire/
 │   ├── about_tool_definitions.py
 │   ├── about_tool_calling.py
 │   ├── about_constraining_tools.py
+│   ├── about_context_composition.py
 │   ├── about_skills_rtcc.py
 │   ├── about_evaluation_criteria.py
 │   ├── about_edd_cycle.py
@@ -188,6 +207,8 @@ llmSquire/
 │   ├── about_adversarial_review.py
 │   ├── about_orchestration.py
 │   └── about_punch_out.py
+├── diagrams/                       # Auto-generated sequence diagrams (HTML)
+│   └── .gitkeep
 ├── solutions/                      # Reference solutions (for self-checking)
 │   ├── about_invocation.py
 │   └── ...
@@ -252,8 +273,12 @@ in the messages array of the second call.
 Please meditate on the following code:
 ./koans/about_statelessness.py:28
 
+Sequence diagram: diagrams/about_statelessness_test_the_model_does_not_remember_20260914_153022.html
+
 mountains are merely mountains
 ```
+
+The learner can open the sequence diagram in their browser to see exactly what was sent to the LLM on each call, what came back, and how the context window differed between the two calls. For this koan, the diagram makes the statelessness viscerally visible: the second call's context panel shows only the single "What is my name?" message — no memory of "Alice" anywhere in the payload.
 
 The learner edits the file, re-runs, and progresses. The grading logic (the assertion, the failure message, the zen output) all live in `llmsquire/sensei.py` and `llmsquire/assertions.py` — the learner never sees them.
 
@@ -267,7 +292,8 @@ Following Ruby Koans' `edgecase.rb`:
 - `self.assert_tool_not_called(response, tool_name)` — verifies a tool was NOT invoked
 - `self.assert_json_schema(response, schema)` — validates structured output
 - `self.assert_eval(response, criteria)` — runs an LLM-based evaluation
-- `llm.ask(messages=..., tools=..., model=...)` — the LLM client wrapper
+- `llm.ask(messages=..., tools=..., model=...)` — the LLM client wrapper (records all round trips to a conversation trace)
+- After each test method completes (or fails), the harness automatically calls `diagram.render(trace)` to produce the HTML sequence diagram
 
 **`llmsquire/sensei.py`** — The runner. Discovers all Koan subclasses, runs them in path order, stops at first failure, prints zen messages. Modeled directly on Ruby Koans' Sensei class.
 
@@ -282,6 +308,7 @@ PATH = [
     "koans.about_tool_definitions",
     "koans.about_tool_calling",
     "koans.about_constraining_tools",
+    "koans.about_context_composition",
     "koans.about_skills_rtcc",
     "koans.about_evaluation_criteria",
     "koans.about_edd_cycle",
@@ -303,6 +330,34 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 - Returns a structured response object with `.content`, `.tool_calls`, and `.usage`
 - Handles API errors gracefully with clear messages
 - Logs all calls for the audit trail (teaching Stage 4 habits from day one)
+- **Records every round trip** — each call captures the full request payload, full response, timestamp, latency, and token usage into a conversation trace that the diagram generator consumes after the exercise completes
+
+The client maintains a per-exercise conversation trace (a list of interaction records) that is reset at the start of each koan test method. When a test involves the full tool-call loop (user → model → tool_call → tool_result → model → final_answer), the trace captures all round trips, not just the initial call. This trace is what makes the sequence diagrams possible and what makes the audit trail in later koans a natural extension of behavior the learner has been seeing since koan 1.
+
+### 5.5 Sequence Diagram Generator
+
+**`llmsquire/diagram.py`** consumes the conversation trace from an exercise and produces a single-file HTML sequence diagram. The design goals are:
+
+1. **Self-contained**: All CSS and JS is inline. No external dependencies, no CDN links, no web font requirements. The file opens in any browser, on any machine, even offline.
+
+2. **Faithful to the actual payloads**: The diagram shows the exact JSON that was sent to the API and the exact JSON that came back. Messages are rendered with syntax highlighting (via a small inline highlighter, not a library). Tool call arguments and tool results are shown in full, not summarized. If the learner sent 4,000 tokens of context, the diagram shows 4,000 tokens of context — collapsible, but complete.
+
+3. **Lifeline layout**: Three vertical lifelines — Learner/Koan (left), LLM (center), Tools (right). Arrows between them represent the direction of communication:
+   - Learner → LLM: API call (shows request payload)
+   - LLM → Learner: API response (shows response payload, tool_calls, usage, latency)
+   - LLM → Tools: tool call request (shows tool name + arguments)
+   - Tools → LLM: tool result (shows return value, execution time) — delivered as a `tool` role message on the next round trip
+
+4. **Context window panel**: At each LLM lifeline position, an expandable panel shows the complete messages array as it existed at that point in the conversation. This is the key pedagogical feature: the learner can see that after a `read_file` tool call, the context window now contains the system prompt + the user's original message + the assistant's tool_call response + the tool result message with the file contents. The context grows with every round trip, and the panel makes that growth visible, tangible, and concrete.
+
+5. **Timing and token annotations**: Each arrow is annotated with elapsed time (milliseconds between this step and the previous). Each LLM response is annotated with input tokens, output tokens, and cumulative tokens for the exercise. This makes the cost of multi-round-trip patterns viscerally clear.
+
+6. **Diagram file naming**: `diagrams/{koan_name}_{test_name}_{timestamp}.html`. The runner prints the path after each exercise:
+   ```
+   Sequence diagram: diagrams/about_tool_calling_test_the_full_loop_20260914_153022.html
+   ```
+
+7. **Diagram on failure**: When a test fails, the diagram is still generated for the interactions that occurred before the failure. The learner can examine what the model actually did, what context it had, and why the assertion failed. This is often more educational than the failure message itself — seeing that the model called the wrong tool, or didn't call any tool, or produced output in the wrong format is immediately diagnosable from the diagram.
 
 ---
 
@@ -397,11 +452,27 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 
 **Key insight**: This is the foundational lesson. By constraining tools, you define what a worker CAN do and, critically, what it CANNOT do. This is how you build specialized workers rather than general-purpose chatbots.
 
+#### Koan 8: about_context_composition.py — "What the Model Actually Sees"
+
+**Concept**: After a tool call, the context window grows. The model's next response is based on everything in context — the system prompt, the user's message, the assistant's tool call, and the tool result. Understanding exactly what is in context at each step is the key to effective evaluation.
+
+**Exercises**:
+- Trigger a `read_file` tool call. Open the sequence diagram. See the context window panel at round trip 1 (before the tool call) vs. round trip 2 (after the tool result was added). The file contents are now in context as a `tool` role message.
+- Trigger two tool calls in sequence (read_file, then search). See how the context grows with each round trip. The model sees all prior tool results, not just the most recent one.
+- Now, instead of triggering a real tool call, construct the messages array manually: include the system prompt, a user message, a synthetic assistant tool_call message, and a synthetic tool result message with the file contents pre-filled. Call the model with this pre-populated context. Observe that the model responds exactly as if it had called the tool itself.
+- Reflection comment: "The model doesn't know or care whether a tool was actually called. It only sees the messages in its context window. If you put the tool result there, it's there. This means you can test skills that use tools WITHOUT actually running the tools — you just construct the context the skill would have seen."
+
+**Key insight**: This is the bridge between tool calling and EDD. If a skill reads three files and then reasons about them, you don't need your EDD runner to put files on disk, configure paths, and execute the read_file tool. You construct the test scenario by pre-populating the context window with the messages the skill would have produced — the tool calls and tool results — and then you evaluate the model's reasoning output directly. The sequence diagram from the previous koan showed you exactly what those messages look like; now you use that knowledge to build tests.
+
+**Sequence diagram focus**: This koan's diagram is the most important one in the curriculum. It shows two scenarios side by side: (1) the real tool-call loop with actual file reads, and (2) the synthetic context with pre-populated tool results. The diagrams are visually identical in structure — the same message types, the same roles, the same content. This visual equivalence is the "aha" moment: the model cannot distinguish between real tool calls and synthetic ones, so your tests don't need to either.
+
+**Student sees**: A messages array with blanks to fill in, where the learner constructs a synthetic conversation that includes tool call and tool result messages. The teaching comments explain why this works and what it enables.
+
 ---
 
 ### Phase 3: Skills — Prompts as Code
 
-#### Koan 8: about_skills_rtcc.py — "The Job Description"
+#### Koan 9: about_skills_rtcc.py — "The Job Description"
 
 **Concept**: A skill is a written job description for a unit of work. The RTCC framework (Role, Task, Context, Constraints) provides the structure.
 
@@ -416,7 +487,7 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 
 **Stage 3 connection**: This is exactly what Stage 3 certification requires — a deliberate, structured prompt with clear constraints. The learner is practicing the artifact they'll need to certify.
 
-#### Koan 9: about_evaluation_criteria.py — "How Do You Know It Works?"
+#### Koan 10: about_evaluation_criteria.py — "How Do You Know It Works?"
 
 **Concept**: A skill without evaluation is an opinion. Evaluation criteria make it engineering.
 
@@ -433,7 +504,7 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 
 ### Phase 4: Evaluation-Driven Development (EDD)
 
-#### Koan 10: about_edd_cycle.py — "Red, Green, Refactor for Prompts"
+#### Koan 11: about_edd_cycle.py — "Red, Green, Refactor for Prompts"
 
 **Concept**: EDD applies TDD discipline to prompt engineering. Write criteria first (Red), iterate until passing (Green), remove dead-weight instructions (Refactor).
 
@@ -443,16 +514,18 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 - Iterate 3 times, documenting each hypothesis and result in an iteration log
 - Once all criteria pass (Green), review the prompt for load-bearing: can any instruction be removed without causing a criterion to fail? Remove dead weight (Refactor).
 - Calculate the load-bearing percentage: what fraction of instructions serve at least one evaluation criterion?
+- **Context-window testing exercise**: The skill under test reads three files and reasons about them to produce a summary. Instead of creating real files on disk and running the read_file tool, construct the test scenario by pre-populating the messages array with synthetic tool call and tool result messages containing the file contents. Run the skill against this synthetic context. Observe that the evaluation works identically — the model produces the same quality of reasoning whether the file contents came from real tool calls or from synthetic messages you constructed.
+- Open the sequence diagram from the context-composition koan (Koan 8) side by side with this exercise's diagram. See that the message structure is the same. This is the practical payoff of understanding context composition: your EDD runner becomes simpler, faster, and more deterministic because you eliminate file I/O and tool execution from the test loop.
 
-**Stage 3 connection**: This IS Stage 3. The learner is doing the exact Red/Green/Refactor cycle that certification requires, with the iteration log and load-bearing analysis.
+**Stage 3 connection**: This IS Stage 3. The learner is doing the exact Red/Green/Refactor cycle that certification requires, with the iteration log and load-bearing analysis. The context-window testing exercise directly addresses a common failure mode in Stage 3 submissions: practitioners who try to evaluate skills that use tools by setting up complex file fixtures and running the full tool-call loop, when they could simply construct the context the skill would have seen and evaluate the reasoning output directly.
 
-**Student sees**: A skill file, an evaluation file, and an iteration log template. They edit the skill, run the eval, log the iteration, and repeat. The harness runs the evaluation and reports scores.
+**Student sees**: A skill file, an evaluation file, and an iteration log template. They edit the skill, run the eval, log the iteration, and repeat. The harness runs the evaluation and reports scores. The context-window testing exercise provides a pre-built messages array template with blanks for the synthetic tool results.
 
 ---
 
 ### Phase 5: Decomposition — From Tasks to Workflows
 
-#### Koan 11: about_decomposition.py — "Divide and Conquer"
+#### Koan 12: about_decomposition.py — "Divide and Conquer"
 
 **Concept**: Complex workflows are chains of individually validated skills. Each step does one thing well.
 
@@ -466,7 +539,7 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 
 **Stage 4 connection**: Stage 4 requires multiple Stage 3 agents wired into a workflow. The learner is building the first workflow and understanding why each step must be individually validated first.
 
-#### Koan 12: about_guardrails.py — "The Walls Between Rooms"
+#### Koan 13: about_guardrails.py — "The Walls Between Rooms"
 
 **Concept**: Guardrails sit BETWEEN steps, not inside them. They validate outputs before the next step is allowed to begin.
 
@@ -479,7 +552,7 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 
 **Stage 4 connection**: Stage 4 requires both deterministic hooks AND adversarial review agents. This koan introduces the deterministic side.
 
-#### Koan 13: about_adversarial_review.py — "The Red Team"
+#### Koan 14: about_adversarial_review.py — "The Red Team"
 
 **Concept**: Adversarial review agents challenge the prior step's output from a DIFFERENT perspective. They are not redundant second opinions — they are trying to find what went wrong.
 
@@ -493,7 +566,7 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 
 **Stage 4 connection**: This is the exact Stage 4 requirement — adversarial agents must genuinely challenge with a different perspective, not just re-verify.
 
-#### Koan 14: about_orchestration.py — "The Harness Executes"
+#### Koan 15: about_orchestration.py — "The Harness Executes"
 
 **Concept**: A harness is a script that EXECUTES the workflow end-to-end: calls agents in sequence, passes outputs, fires guardrails, handles failures. A YAML config that documents step order is NOT a harness.
 
@@ -508,7 +581,7 @@ The `llm.ask()` function is the single entry point for all LLM interactions. It 
 
 **Stage 4 connection**: The harness/runner script is a hard Stage 4 requirement. This koan teaches it directly.
 
-#### Koan 15: about_punch_out.py — "The Human in the Machine"
+#### Koan 16: about_punch_out.py — "The Human in the Machine"
 
 **Concept**: Punch-out points are explicit, provable human evacuation points where the workflow cannot proceed without human sign-off.
 
@@ -648,18 +721,20 @@ A `--offline` flag runs only koans that don't require API calls (prompt structur
 
 ### 9.1 Learning Outcomes
 
-A learner who completes all 15 koans should be able to:
+A learner who completes all 16 koans should be able to:
 1. Explain why LLMs are stateless and demonstrate how to manage conversation state
 2. Define a tool using the JSON schema and handle the tool-call loop
 3. Explain how constraining available tools shapes worker behavior
-4. Write a skill using the RTCC framework
-5. Write 3+ evaluation criteria for a skill
-6. Run the EDD Red/Green/Refactor cycle on a skill
-7. Decompose a complex task into individually validated steps
-8. Add deterministic guardrails between workflow steps
-9. Write an adversarial review agent with a distinct perspective
-10. Build a harness that executes a multi-step workflow end-to-end
-11. Implement and test a punch-out point for human approval
+4. Read a sequence diagram of an LLM interaction and identify exactly what is in the context window at each round trip
+5. Construct synthetic context windows with pre-populated tool results to test skills without executing real tool calls or file I/O
+6. Write a skill using the RTCC framework
+7. Write 3+ evaluation criteria for a skill
+8. Run the EDD Red/Green/Refactor cycle on a skill, including context-window-based testing
+9. Decompose a complex task into individually validated steps
+10. Add deterministic guardrails between workflow steps
+11. Write an adversarial review agent with a distinct perspective
+12. Build a harness that executes a multi-step workflow end-to-end
+13. Implement and test a punch-out point for human approval
 
 ### 9.2 Stage 3 Readiness
 
@@ -766,6 +841,9 @@ MIT (matching the permissive spirit of both Ruby Koans and the educational goals
 | LLMs are stateless function callors | about_statelessness |
 | Tool calling is the core primitive | about_tool_definitions, about_tool_calling |
 | Constraining tools defines workers | about_constraining_tools |
+| Context composition after tool calls | about_context_composition |
+| Sequence diagrams make round trips visible | All koans (auto-generated by diagram.py) |
+| Synthetic context enables tool-free testing | about_context_composition, about_edd_cycle |
 | RTCC prompt structure | about_skills_rtcc |
 | 3+ evaluation criteria required | about_evaluation_criteria |
 | EDD Red/Green/Refactor | about_edd_cycle |
