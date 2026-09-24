@@ -3,6 +3,8 @@ diagrams/*.html
 
 # Environment
 .env
+.venv/
+venv/
 
 # Python
 __pycache__/
@@ -15,3 +17,6 @@ build/
 
 # pytest
 .pytest_cache/
+
+# OS
+.DS_Store

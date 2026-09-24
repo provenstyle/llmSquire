@@ -30,7 +30,11 @@ By the end, you will have internalized through your own hands-on work:
 git clone https://github.com/trayburn/llmSquire.git
 cd llmSquire
 
-# Install dependencies
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# Install dependencies (into the virtual environment)
 pip install -e ".[dev]"
 
 # Configure your API key
@@ -46,8 +50,16 @@ bash setup-api-key.sh
 
 ### Run the Koans
 
+With your virtual environment activated:
+
 ```bash
 python -m llmsquire
+```
+
+If you skipped `source .venv/bin/activate`, invoke the venv's interpreter directly:
+
+```bash
+.venv/bin/python -m llmsquire        # Windows: .venv\Scripts\python -m llmsquire
 ```
 
 The runner executes each koan in order. When a koan fails, it stops and shows you:
