@@ -14,7 +14,8 @@ from llmsquire.koan import Koan
 from llmsquire.path_to_enlightenment import PATH
 
 
-DIAGRAMS_DIR = Path(__file__).resolve().parent.parent / "diagrams"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DIAGRAMS_DIR = PROJECT_ROOT / "diagrams"
 
 
 def render_diagram(trace):
@@ -136,11 +137,32 @@ class Sensei:
 
     @staticmethod
     def _failure_location(error: BaseException, koan_class: Type[Koan], test_name: str) -> str:
-        """Find the innermost traceback frame, falling back to the test method."""
+        """Point at the learner's code — the innermost frame inside the koan's own file.
+
+        Assertion helpers and the LLM client raise from the harness, so the deepest
+        frame is usually infrastructure. The koan frame is what the learner edits.
+        """
+        try:
+            source = inspect.getsourcefile(koan_class)
+        except (TypeError, OSError):
+            source = None
         frames = traceback.extract_tb(error.__traceback__)
+        if source:
+            koan_file = os.path.realpath(source)
+            for frame in reversed(frames):
+                if os.path.realpath(frame.filename) == koan_file:
+                    return Sensei._format_location(frame.filename, frame.lineno)
         if frames:
             frame = frames[-1]
-            return f"{frame.filename}:{frame.lineno}"
-        source = inspect.getsourcefile(koan_class) or "<unknown>"
+            return Sensei._format_location(frame.filename, frame.lineno)
         _, line = inspect.findsource(getattr(koan_class, test_name))
-        return f"{os.path.relpath(source)}:{line + 1}"
+        return Sensei._format_location(source or "<unknown>", line + 1)
+
+    @staticmethod
+    def _format_location(filename: str, lineno: int) -> str:
+        """Render a location as the docs show it — project-relative with a ./ prefix."""
+        try:
+            relative = Path(filename).resolve().relative_to(PROJECT_ROOT.resolve())
+        except ValueError:
+            return f"{filename}:{lineno}"
+        return f"./{relative}:{lineno}"
