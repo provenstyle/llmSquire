@@ -79,6 +79,18 @@ mountains are merely mountains
 
 Open the file it points you to, find the `_fill_` blanks, replace them with the correct values, and run again. That's the loop — fail, meditate, fix, progress.
 
+### Run Individual Koans
+
+To focus on one koan (or a few) instead of the whole path, pass them as arguments:
+
+```bash
+python -m llmsquire about_invocation
+python -m llmsquire about_invocation about_statelessness   # in the order given
+python -m llmsquire --list                                 # the full curriculum, in order
+```
+
+Names, dotted modules, and file paths all work (`about_invocation`, `koans.about_invocation`, `koans/about_invocation.py`). As always, the runner stops at the first failure.
+
 ## Sequence Diagrams
 
 After each exercise, the runner prints a path to an HTML sequence diagram. Open it in any browser to see exactly what happened:
