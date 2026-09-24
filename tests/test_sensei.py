@@ -1,6 +1,7 @@
 """Behavior tests for the Sensei koan runner."""
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 
@@ -122,3 +123,42 @@ def test_sensei_writes_rendered_diagram_next_to_the_koans(monkeypatch, tmp_path)
     diagrams = list(tmp_path.glob("diagram_test_alpha_*.html"))
     assert len(diagrams) == 1
     assert diagrams[0].read_text() == html
+
+
+KOAN_WITH_A_BLANK = """\
+from llmsquire.koan import Koan, _fill_
+
+
+class TempKoan(Koan):
+    def test_alpha(self):
+        self.assert_match(_fill_, "the response")
+"""
+
+
+def test_failure_location_points_at_the_koan_not_the_harness(monkeypatch, tmp_path, capsys):
+    from llmsquire.sensei import Sensei
+
+    module_name = "test_koans.about_temp"
+    source = tmp_path / "about_temp.py"
+    source.write_text(KOAN_WITH_A_BLANK)
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, module_name, module)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr("llmsquire.sensei.PROJECT_ROOT", tmp_path.resolve())
+    monkeypatch.setattr("llmsquire.sensei.render_diagram", lambda trace: None)
+
+    assert Sensei(path=[module_name]).run() is False
+
+    output = capsys.readouterr().out
+    assert "./about_temp.py:6" in output
+    assert "koan.py:" not in output
+
+
+def test_failure_location_renders_paths_the_way_the_readme_documents():
+    from llmsquire.sensei import PROJECT_ROOT, Sensei
+
+    location = Sensei._format_location(
+        str(PROJECT_ROOT / "koans" / "about_invocation.py"), 45
+    )
+    assert location == "./koans/about_invocation.py:45"

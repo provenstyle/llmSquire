@@ -30,7 +30,11 @@ By the end, you will have internalized through your own hands-on work:
 git clone https://github.com/trayburn/llmSquire.git
 cd llmSquire
 
-# Install dependencies
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# Install dependencies (into the virtual environment)
 pip install -e ".[dev]"
 
 # Configure your API key
@@ -46,8 +50,16 @@ bash setup-api-key.sh
 
 ### Run the Koans
 
+With your virtual environment activated:
+
 ```bash
 python -m llmsquire
+```
+
+If you skipped `source .venv/bin/activate`, invoke the venv's interpreter directly:
+
+```bash
+.venv/bin/python -m llmsquire        # Windows: .venv\Scripts\python -m llmsquire
 ```
 
 The runner executes each koan in order. When a koan fails, it stops and shows you:
@@ -66,6 +78,18 @@ mountains are merely mountains
 ```
 
 Open the file it points you to, find the `_fill_` blanks, replace them with the correct values, and run again. That's the loop — fail, meditate, fix, progress.
+
+### Run Individual Koans
+
+To focus on one koan (or a few) instead of the whole path, pass them as arguments:
+
+```bash
+python -m llmsquire about_invocation
+python -m llmsquire about_invocation about_statelessness   # in the order given
+python -m llmsquire --list                                 # the full curriculum, in order
+```
+
+Names, dotted modules, and file paths all work (`about_invocation`, `koans.about_invocation`, `koans/about_invocation.py`). As always, the runner stops at the first failure.
 
 ## Sequence Diagrams
 
